@@ -1,64 +1,399 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 
-export default function Home() {
+interface Venue {
+  id: string;
+  slug: string;
+  url: string;
+  name: string;
+  image: string | null;
+  online: boolean | null;
+  lastChecked: number | null;
+  tracking: boolean;
+}
+
+function urlBase64ToUint8Array(base64String: string): ArrayBuffer {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray.buffer as ArrayBuffer;
+}
+
+function getUserId(): string {
+  const key = "wolt-tracker-user-id";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
+// ─── Status badge component ───
+
+function StatusBadge({ venue }: { venue: Venue }) {
+  if (venue.online === null) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-wolt-bg-tertiary text-wolt-text-secondary">
+        <span className="w-1.5 h-1.5 rounded-full bg-wolt-text-disabled animate-pulse" />
+        Checking
+      </span>
+    );
+  }
+  if (venue.online) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700">
+        <span className="w-1.5 h-1.5 rounded-full bg-wolt-positive" />
+        Online
+      </span>
+    );
+  }
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-600">
+      <span className="w-1.5 h-1.5 rounded-full bg-wolt-negative" />
+      Offline
+    </span>
+  );
+}
+
+// ─── Main app ───
+
+export default function Home() {
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [url, setUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const userIdRef = useRef<string>("");
+
+  useEffect(() => {
+    userIdRef.current = getUserId();
+  }, []);
+
+  const headers = useCallback(
+    () => ({
+      "Content-Type": "application/json",
+      "x-user-id": userIdRef.current,
+    }),
+    []
+  );
+
+  const fetchVenues = useCallback(async () => {
+    if (!userIdRef.current) return;
+    try {
+      const res = await fetch("/api/venues", { headers: headers() });
+      const data = await res.json();
+      setVenues(data.venues);
+    } catch (err) {
+      console.error("Failed to fetch venues:", err);
+    }
+  }, [headers]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => fetchVenues(), 100);
+    const interval = setInterval(fetchVenues, 30_000);
+    return () => {
+      clearTimeout(timeout);
+      clearInterval(interval);
+    };
+  }, [fetchVenues]);
+
+  useEffect(() => {
+    async function setupPush() {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        setPushError("Push notifications are not supported in this browser.");
+        return;
+      }
+
+      try {
+        const registration = await navigator.serviceWorker.register("/sw.js");
+        await navigator.serviceWorker.ready;
+
+        const existingSub = await registration.pushManager.getSubscription();
+        if (existingSub) {
+          await sendSubscriptionToServer(existingSub);
+          setPushEnabled(true);
+          return;
+        }
+
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+          setPushError("Enable notifications to get alerts when venues open.");
+          return;
+        }
+
+        const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+        if (!vapidPublicKey) {
+          setPushError("VAPID public key not configured.");
+          return;
+        }
+
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+        });
+
+        await sendSubscriptionToServer(subscription);
+        setPushEnabled(true);
+      } catch (err) {
+        console.error("Push setup failed:", err);
+        setPushError("Something went wrong setting up notifications.");
+      }
+    }
+
+    const timeout = setTimeout(setupPush, 200);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  async function sendSubscriptionToServer(subscription: PushSubscription) {
+    await fetch("/api/subscribe", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(subscription.toJSON()),
+    });
+  }
+
+  async function addVenue(e: React.FormEvent) {
+    e.preventDefault();
+    if (!url.trim()) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch("/api/venues", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ url }),
+      });
+      if (res.ok) {
+        setUrl("");
+        fetchVenues();
+      }
+    } catch (err) {
+      console.error("Failed to add venue:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteVenue(id: string) {
+    await fetch(`/api/venues?id=${id}`, {
+      method: "DELETE",
+      headers: headers(),
+    });
+    fetchVenues();
+  }
+
+  async function toggleTracking(id: string, tracking: boolean) {
+    await fetch("/api/venues", {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ id, tracking: !tracking }),
+    });
+    fetchVenues();
+  }
+
+  function timeAgo(ts: number | null): string {
+    if (!ts) return "never";
+    const diff = Date.now() - ts;
+    const seconds = Math.floor(diff / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    return `${Math.floor(minutes / 60)}h ago`;
+  }
+
+  return (
+    <div className="min-h-screen bg-wolt-bg-secondary">
+      {/* Top bar */}
+      <header className="sticky top-0 z-10 bg-wolt-bg-primary border-b border-wolt-border">
+        <div className="max-w-[640px] mx-auto px-4 h-14 flex items-center gap-3">
+          {/* Wolt-style logo mark */}
+          <div className="w-8 h-8 rounded-[8px] bg-wolt-blue flex items-center justify-center flex-shrink-0">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15v-4H7l5-8v4h4l-5 8z" fill="white"/>
+            </svg>
+          </div>
+          <h1 className="font-heading text-lg font-semibold text-wolt-text-primary tracking-tight">
+            Venue Tracker
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+
+          {/* Notification status pill */}
+          <div className="ml-auto">
+            {pushEnabled ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-wolt-positive" />
+                Notifications on
+              </span>
+            ) : pushError ? (
+              <button
+                onClick={() => Notification.requestPermission().then(() => window.location.reload())}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors cursor-pointer"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" fill="currentColor"/>
+                </svg>
+                Enable alerts
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs text-wolt-text-disabled">
+                <span className="w-1.5 h-1.5 rounded-full bg-wolt-text-disabled animate-pulse" />
+                Connecting...
+              </span>
+            )}
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+      </header>
+
+      <main className="max-w-[640px] mx-auto px-4 py-6">
+        {/* Search / Add form — styled like Wolt's search bar */}
+        <form onSubmit={addVenue} className="mb-6">
+          <div
+            className="flex items-center bg-wolt-bg-primary rounded-[12px] border border-wolt-border overflow-hidden transition-shadow focus-within:shadow-[0_0_0_2px_var(--wolt-blue)]"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+            <div className="pl-4 text-wolt-text-disabled">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor"/>
+              </svg>
+            </div>
+            <input
+              type="text"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="Paste a Wolt restaurant link or slug"
+              className="flex-1 h-12 px-3 bg-transparent text-sm text-wolt-text-primary placeholder:text-wolt-text-disabled outline-none"
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+            <button
+              type="submit"
+              disabled={loading || !url.trim()}
+              className="h-12 px-5 text-sm font-semibold text-white bg-wolt-blue hover:bg-wolt-blue-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {loading ? (
+                <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                "Track"
+              )}
+            </button>
+          </div>
+        </form>
+
+        {/* Venue list */}
+        {venues.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-wolt-bg-tertiary flex items-center justify-center">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M18.36 9l.6 3H5.04l.6-3h12.72M20 4H4v2h16V4zm0 3H4l-1 5v2h1v6h10v-6h4v6h2v-6h1v-2l-1-5zM6 18v-4h6v4H6z" fill="#a1a5ad"/>
+              </svg>
+            </div>
+            <p className="text-sm font-semibold text-wolt-text-primary mb-1">
+              No venues tracked yet
+            </p>
+            <p className="text-sm text-wolt-text-secondary max-w-[280px] mx-auto leading-relaxed">
+              Paste a Wolt restaurant link above and we&apos;ll let you know when it opens
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {venues.map((venue) => (
+              <div
+                key={venue.id}
+                className="bg-wolt-bg-primary rounded-[12px] border border-wolt-border p-4 transition-shadow hover:shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
+              >
+                <div className="flex items-start gap-3">
+                  {/* Venue image or fallback icon */}
+                  {venue.image ? (
+                    <Image
+                      src={`${venue.image}?w=200`}
+                      alt={venue.name}
+                      width={48}
+                      height={48}
+                      className={`w-12 h-12 rounded-[8px] object-cover flex-shrink-0 ${
+                        !venue.tracking ? "opacity-50 grayscale" : ""
+                      }`}
+                    />
+                  ) : (
+                    <div className={`w-12 h-12 rounded-[8px] flex items-center justify-center flex-shrink-0 ${
+                      venue.online
+                        ? "bg-green-50"
+                        : venue.online === false
+                          ? "bg-red-50"
+                          : "bg-wolt-bg-tertiary"
+                    }`}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path
+                          d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"
+                          fill={
+                            venue.online
+                              ? "#1fc70a"
+                              : venue.online === false
+                                ? "#f93a25"
+                                : "#a1a5ad"
+                          }
+                        />
+                      </svg>
+                    </div>
+                  )}
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <a
+                        href={venue.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm font-semibold text-wolt-text-primary hover:text-wolt-blue transition-colors truncate"
+                      >
+                        {venue.name}
+                      </a>
+                      <StatusBadge venue={venue} />
+                      {!venue.tracking && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-600">
+                          Paused
+                        </span>
+                      )}
+                    </div>
+                    {venue.name !== venue.slug && (
+                      <p className="text-xs text-wolt-text-disabled truncate mb-0.5">
+                        {venue.slug}
+                      </p>
+                    )}
+                    <p className="text-xs text-wolt-text-secondary">
+                      {venue.lastChecked
+                        ? `Last checked ${timeAgo(venue.lastChecked)}`
+                        : "Waiting for first check"}
+                    </p>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => toggleTracking(venue.id, venue.tracking)}
+                      className="h-8 px-3 text-xs font-medium rounded-[8px] text-wolt-text-secondary hover:bg-wolt-bg-secondary transition-colors"
+                    >
+                      {venue.tracking ? "Pause" : "Resume"}
+                    </button>
+                    <button
+                      onClick={() => deleteVenue(venue.id)}
+                      className="h-8 w-8 flex items-center justify-center rounded-[8px] text-wolt-text-disabled hover:text-wolt-negative hover:bg-red-50 transition-colors"
+                      title="Remove"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );
