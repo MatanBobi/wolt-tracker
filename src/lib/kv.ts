@@ -1,6 +1,6 @@
 /**
- * Minimal KV adapter that mirrors the subset of @vercel/kv methods we use.
- * In production (KV_REST_API_URL set) → delegates to @vercel/kv.
+ * Minimal KV adapter that mirrors the subset of Redis methods we use.
+ * In production (KV_REST_API_URL set) → delegates to @upstash/redis.
  * In local dev (no KV_REST_API_URL)   → uses an in-memory Map.
  */
 
@@ -83,71 +83,58 @@ class InMemoryKV implements KVAdapter {
   }
 }
 
-// ─── Vercel KV wrapper ───
+// ─── Upstash Redis wrapper ───
 
-class VercelKVAdapter implements KVAdapter {
-  private kvPromise: Promise<typeof import("@vercel/kv")>;
+class UpstashRedisAdapter implements KVAdapter {
+  private client: import("@upstash/redis").Redis;
 
   constructor() {
-    // Dynamic import so @vercel/kv doesn't fail at module load when env vars are missing
-    this.kvPromise = import("@vercel/kv");
-  }
-
-  private async client() {
-    const mod = await this.kvPromise;
-    return mod.kv;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Redis } = require("@upstash/redis") as typeof import("@upstash/redis");
+    this.client = new Redis({
+      url: process.env.KV_REST_API_URL!,
+      token: process.env.KV_REST_API_TOKEN!,
+    });
   }
 
   async get<T>(key: string): Promise<T | null> {
-    const kv = await this.client();
-    return kv.get<T>(key);
+    return this.client.get<T>(key);
   }
 
   async set(key: string, value: unknown): Promise<void> {
-    const kv = await this.client();
-    await kv.set(key, value);
+    await this.client.set(key, value);
   }
 
   async del(key: string): Promise<void> {
-    const kv = await this.client();
-    await kv.del(key);
+    await this.client.del(key);
   }
 
   async hgetall<T>(key: string): Promise<T | null> {
-    const kv = await this.client();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return kv.hgetall(key) as Promise<T | null>;
+    return this.client.hgetall(key) as Promise<T | null>;
   }
 
   async hget<T>(key: string, field: string): Promise<T | null> {
-    const kv = await this.client();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return kv.hget(key, field) as Promise<T | null>;
+    return this.client.hget(key, field) as Promise<T | null>;
   }
 
   async hset(key: string, values: Record<string, unknown>): Promise<void> {
-    const kv = await this.client();
-    await kv.hset(key, values);
+    await this.client.hset(key, values);
   }
 
   async hdel(key: string, ...fields: string[]): Promise<void> {
-    const kv = await this.client();
-    await kv.hdel(key, ...(fields as [string, ...string[]]));
+    await this.client.hdel(key, ...(fields as [string, ...string[]]));
   }
 
   async sadd(key: string, ...members: string[]): Promise<void> {
-    const kv = await this.client();
-    await kv.sadd(key, ...(members as [string, ...string[]]));
+    await this.client.sadd(key, ...(members as [string, ...string[]]));
   }
 
   async srem(key: string, ...members: string[]): Promise<void> {
-    const kv = await this.client();
-    await kv.srem(key, ...(members as [string, ...string[]]));
+    await this.client.srem(key, ...(members as [string, ...string[]]));
   }
 
   async smembers(key: string): Promise<string[]> {
-    const kv = await this.client();
-    return kv.smembers(key);
+    return this.client.smembers(key);
   }
 }
 
@@ -156,9 +143,9 @@ class VercelKVAdapter implements KVAdapter {
 const useVercelKV = !!process.env.KV_REST_API_URL;
 
 export const db: KVAdapter = useVercelKV
-  ? new VercelKVAdapter()
+  ? new UpstashRedisAdapter()
   : new InMemoryKV();
 
 if (!useVercelKV) {
-  console.log("[KV] Using in-memory store (set KV_REST_API_URL for Vercel KV)");
+  console.log("[KV] Using in-memory store (set KV_REST_API_URL for Upstash Redis)");
 }
