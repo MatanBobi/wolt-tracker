@@ -47,6 +47,8 @@ interface WoltSearchResponse {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("q");
+  const lat = parseFloat(searchParams.get("lat") ?? "") || DEFAULT_LAT;
+  const lon = parseFloat(searchParams.get("lon") ?? "") || DEFAULT_LON;
 
   if (!query || query.trim().length < 2) {
     return NextResponse.json({ venues: [] });
@@ -66,8 +68,8 @@ export async function GET(request: NextRequest) {
       },
       body: JSON.stringify({
         q: query.trim(),
-        lat: DEFAULT_LAT,
-        lon: DEFAULT_LON,
+        lat,
+        lon,
       }),
       cache: "no-store",
     });

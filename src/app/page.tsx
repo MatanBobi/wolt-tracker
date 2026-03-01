@@ -87,6 +87,13 @@ export default function Home() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [location, setLocation] = useState<{
+    lat: number;
+    lon: number;
+  } | null>(null);
+  const [locationStatus, setLocationStatus] = useState<
+    "pending" | "granted" | "denied" | "unavailable"
+  >("pending");
   const userIdRef = useRef<string>("");
   const searchRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -94,6 +101,37 @@ export default function Home() {
   useEffect(() => {
     userIdRef.current = getUserId();
   }, []);
+
+  // ─── Request user location ───
+
+  const requestLocation = useCallback(() => {
+    if (!("geolocation" in navigator)) {
+      setLocationStatus("unavailable");
+      return;
+    }
+
+    setLocationStatus("pending");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+        });
+        setLocationStatus("granted");
+      },
+      (error) => {
+        console.warn("Geolocation error:", error.message);
+        setLocationStatus(
+          error.code === error.PERMISSION_DENIED ? "denied" : "unavailable"
+        );
+      },
+      { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 }
+    );
+  }, []);
+
+  useEffect(() => {
+    requestLocation();
+  }, [requestLocation]);
 
   const headers = useCallback(
     () => ({
@@ -134,9 +172,12 @@ export default function Home() {
 
     setSearchLoading(true);
     try {
-      const res = await fetch(
-        `/api/venues/search?q=${encodeURIComponent(q.trim())}`
-      );
+      const params = new URLSearchParams({ q: q.trim() });
+      if (location) {
+        params.set("lat", String(location.lat));
+        params.set("lon", String(location.lon));
+      }
+      const res = await fetch(`/api/venues/search?${params}`);
       const data = await res.json();
       setSearchResults(data.venues ?? []);
       setShowResults(true);
@@ -147,7 +188,7 @@ export default function Home() {
     } finally {
       setSearchLoading(false);
     }
-  }, []);
+  }, [location]);
 
   function handleQueryChange(value: string) {
     setQuery(value);
@@ -374,7 +415,35 @@ export default function Home() {
           </h1>
 
           {/* Notification status pill */}
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {/* Location status pill */}
+            {locationStatus === "granted" ? (
+              <span
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700"
+                title={`Location: ${location?.lat.toFixed(4)}, ${location?.lon.toFixed(4)}`}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="currentColor"/>
+                </svg>
+                Nearby
+              </span>
+            ) : locationStatus === "denied" || locationStatus === "unavailable" ? (
+              <button
+                onClick={requestLocation}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors cursor-pointer"
+                title={locationStatus === "denied" ? "Location access denied. Click to retry." : "Location unavailable. Click to retry."}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="currentColor"/>
+                </svg>
+                {locationStatus === "denied" ? "Location denied" : "No location"}
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs text-wolt-text-disabled">
+                <span className="w-1.5 h-1.5 rounded-full bg-wolt-text-disabled animate-pulse" />
+                Locating...
+              </span>
+            )}
             {pushEnabled ? (
               <button
                 onClick={() => setupPush({ interactive: true })}
