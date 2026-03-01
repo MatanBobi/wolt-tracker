@@ -14,6 +14,16 @@ interface Venue {
   tracking: boolean;
 }
 
+interface SearchResult {
+  slug: string;
+  name: string;
+  online: boolean;
+  address: string;
+  image: { url: string } | null;
+  tags: string[];
+  rating: { score: number } | null;
+}
+
 function urlBase64ToUint8Array(base64String: string): ArrayBuffer {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding)
@@ -68,11 +78,18 @@ function StatusBadge({ venue }: { venue: Venue }) {
 
 export default function Home() {
   const [venues, setVenues] = useState<Venue[]>([]);
-  const [url, setUrl] = useState("");
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
+  const [pushLoading, setPushLoading] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const userIdRef = useRef<string>("");
+  const searchRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
 
   useEffect(() => {
     userIdRef.current = getUserId();
@@ -106,52 +123,180 @@ export default function Home() {
     };
   }, [fetchVenues]);
 
+  // ─── Search venues with debounce ───
+
+  const searchVenues = useCallback(async (q: string) => {
+    if (q.trim().length < 2) {
+      setSearchResults([]);
+      setShowResults(false);
+      return;
+    }
+
+    setSearchLoading(true);
+    try {
+      const res = await fetch(
+        `/api/venues/search?q=${encodeURIComponent(q.trim())}`
+      );
+      const data = await res.json();
+      setSearchResults(data.venues ?? []);
+      setShowResults(true);
+      setActiveIndex(-1);
+    } catch (err) {
+      console.error("Search failed:", err);
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, []);
+
+  function handleQueryChange(value: string) {
+    setQuery(value);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (value.trim().length < 2) {
+      setSearchResults([]);
+      setShowResults(false);
+      return;
+    }
+
+    debounceRef.current = setTimeout(() => {
+      searchVenues(value);
+    }, 300);
+  }
+
+  // Close dropdown when clicking outside
   useEffect(() => {
-    async function setupPush() {
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-        setPushError("Push notifications are not supported in this browser.");
+    function handleClickOutside(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowResults(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // ─── Keyboard navigation for search results ───
+
+  function handleSearchKeyDown(e: React.KeyboardEvent) {
+    if (!showResults || searchResults.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((prev) =>
+        prev < searchResults.length - 1 ? prev + 1 : 0
+      );
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((prev) =>
+        prev > 0 ? prev - 1 : searchResults.length - 1
+      );
+    } else if (e.key === "Enter" && activeIndex >= 0) {
+      e.preventDefault();
+      selectVenue(searchResults[activeIndex]);
+    } else if (e.key === "Escape") {
+      setShowResults(false);
+    }
+  }
+
+  // ─── Select a venue from search results ───
+
+  async function selectVenue(result: SearchResult) {
+    setShowResults(false);
+    setQuery("");
+    setSearchResults([]);
+    setLoading(true);
+
+    try {
+      const venueUrl = `https://wolt.com/he/isr/tel-aviv/restaurant/${result.slug}`;
+      const res = await fetch("/api/venues", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ url: venueUrl }),
+      });
+      if (res.ok) {
+        fetchVenues();
+      }
+    } catch (err) {
+      console.error("Failed to add venue:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const setupPush = useCallback(async ({ interactive = false } = {}) => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      setPushError("Push notifications are not supported in this browser.");
+      return;
+    }
+
+    if (interactive) setPushLoading(true);
+
+    try {
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
+
+      // Check if the user revoked permission after we got a subscription
+      if (Notification.permission === "denied") {
+        setPushEnabled(false);
+        setPushError("Notifications are blocked. Please enable them in your browser settings.");
         return;
       }
 
-      try {
-        const registration = await navigator.serviceWorker.register("/sw.js");
-        await navigator.serviceWorker.ready;
+      const existingSub = await registration.pushManager.getSubscription();
 
-        const existingSub = await registration.pushManager.getSubscription();
-        if (existingSub) {
-          await sendSubscriptionToServer(existingSub);
-          setPushEnabled(true);
-          return;
-        }
-
-        const permission = await Notification.requestPermission();
-        if (permission !== "granted") {
-          setPushError("Enable notifications to get alerts when venues open.");
-          return;
-        }
-
-        const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-        if (!vapidPublicKey) {
-          setPushError("VAPID public key not configured.");
-          return;
-        }
-
-        const subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
-        });
-
-        await sendSubscriptionToServer(subscription);
+      // If we have an existing subscription AND permission is still granted, we're good
+      if (existingSub && Notification.permission === "granted") {
+        await sendSubscriptionToServer(existingSub);
         setPushEnabled(true);
-      } catch (err) {
-        console.error("Push setup failed:", err);
-        setPushError("Something went wrong setting up notifications.");
+        return;
       }
-    }
 
-    const timeout = setTimeout(setupPush, 200);
+      // For non-interactive (initial page load), don't prompt — just show the enable button
+      if (!interactive && Notification.permission !== "granted") {
+        setPushError("Enable notifications to get alerts when venues open.");
+        return;
+      }
+
+      // Interactive click or permission already granted: request permission and subscribe
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushError(
+          permission === "denied"
+            ? "Notifications are blocked. Please enable them in your browser settings."
+            : "Enable notifications to get alerts when venues open."
+        );
+        setPushEnabled(false);
+        return;
+      }
+
+      const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!vapidPublicKey) {
+        setPushError("VAPID public key not configured.");
+        return;
+      }
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+      });
+
+      await sendSubscriptionToServer(subscription);
+      setPushError(null);
+      setPushEnabled(true);
+    } catch (err) {
+      console.error("Push setup failed:", err);
+      setPushError("Something went wrong setting up notifications.");
+    } finally {
+      setPushLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headers]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setupPush({ interactive: false }), 200);
     return () => clearTimeout(timeout);
-  }, []);
+  }, [setupPush]);
 
   async function sendSubscriptionToServer(subscription: PushSubscription) {
     await fetch("/api/subscribe", {
@@ -163,17 +308,20 @@ export default function Home() {
 
   async function addVenue(e: React.FormEvent) {
     e.preventDefault();
-    if (!url.trim()) return;
+    if (!query.trim()) return;
 
+    // If user typed a URL or slug directly (no search result selected), submit it
+    setShowResults(false);
     setLoading(true);
     try {
       const res = await fetch("/api/venues", {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url: query }),
       });
       if (res.ok) {
-        setUrl("");
+        setQuery("");
+        setSearchResults([]);
         fetchVenues();
       }
     } catch (err) {
@@ -228,18 +376,27 @@ export default function Home() {
           {/* Notification status pill */}
           <div className="ml-auto">
             {pushEnabled ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700">
+              <button
+                onClick={() => setupPush({ interactive: true })}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 hover:bg-green-100 transition-colors cursor-pointer"
+                title="Notifications are enabled"
+              >
                 <span className="w-1.5 h-1.5 rounded-full bg-wolt-positive" />
                 Notifications on
-              </span>
+              </button>
             ) : pushError ? (
               <button
-                onClick={() => Notification.requestPermission().then(() => window.location.reload())}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors cursor-pointer"
+                onClick={() => setupPush({ interactive: true })}
+                disabled={pushLoading}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors cursor-pointer disabled:opacity-60"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" fill="currentColor"/>
-                </svg>
+                {pushLoading ? (
+                  <span className="inline-block w-3 h-3 border-[1.5px] border-amber-300 border-t-amber-700 rounded-full animate-spin" />
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" fill="currentColor"/>
+                  </svg>
+                )}
                 Enable alerts
               </button>
             ) : (
@@ -253,36 +410,128 @@ export default function Home() {
       </header>
 
       <main className="max-w-[640px] mx-auto px-4 py-6">
-        {/* Search / Add form — styled like Wolt's search bar */}
-        <form onSubmit={addVenue} className="mb-6">
-          <div
-            className="flex items-center bg-wolt-bg-primary rounded-[12px] border border-wolt-border overflow-hidden transition-shadow focus-within:shadow-[0_0_0_2px_var(--wolt-blue)]"
-          >
-            <div className="pl-4 text-wolt-text-disabled">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor"/>
-              </svg>
-            </div>
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="Paste a Wolt restaurant link or slug"
-              className="flex-1 h-12 px-3 bg-transparent text-sm text-wolt-text-primary placeholder:text-wolt-text-disabled outline-none"
-            />
-            <button
-              type="submit"
-              disabled={loading || !url.trim()}
-              className="h-12 px-5 text-sm font-semibold text-white bg-wolt-blue hover:bg-wolt-blue-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        {/* Search / Add form — with autocomplete suggestions */}
+        <div ref={searchRef} className="relative mb-6">
+          <form onSubmit={addVenue}>
+            <div
+              className={`flex items-center bg-wolt-bg-primary rounded-[12px] border border-wolt-border overflow-hidden transition-shadow focus-within:shadow-[0_0_0_2px_var(--wolt-blue)] ${
+                showResults && searchResults.length > 0 ? "rounded-b-none border-b-0" : ""
+              }`}
             >
-              {loading ? (
-                <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                "Track"
+              <div className="pl-4 text-wolt-text-disabled">
+                {searchLoading ? (
+                  <span className="inline-block w-5 h-5 border-2 border-wolt-border border-t-wolt-blue rounded-full animate-spin" />
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor"/>
+                  </svg>
+                )}
+              </div>
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => handleQueryChange(e.target.value)}
+                onFocus={() => {
+                  if (searchResults.length > 0) setShowResults(true);
+                }}
+                onKeyDown={handleSearchKeyDown}
+                placeholder="Search for a restaurant or paste a Wolt link"
+                className="flex-1 h-12 px-3 bg-transparent text-sm text-wolt-text-primary placeholder:text-wolt-text-disabled outline-none"
+              />
+              {query.trim() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setSearchResults([]);
+                    setShowResults(false);
+                  }}
+                  className="px-2 text-wolt-text-disabled hover:text-wolt-text-secondary transition-colors"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor"/>
+                  </svg>
+                </button>
               )}
-            </button>
-          </div>
-        </form>
+              <button
+                type="submit"
+                disabled={loading || !query.trim()}
+                className="h-12 px-5 text-sm font-semibold text-white bg-wolt-blue hover:bg-wolt-blue-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {loading ? (
+                  <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  "Track"
+                )}
+              </button>
+            </div>
+          </form>
+
+          {/* Search results dropdown */}
+          {showResults && searchResults.length > 0 && (
+            <div className="absolute left-0 right-0 z-20 bg-wolt-bg-primary border border-wolt-border border-t-0 rounded-b-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] max-h-[360px] overflow-y-auto">
+              {searchResults.map((result, index) => (
+                <button
+                  key={result.slug}
+                  type="button"
+                  onClick={() => selectVenue(result)}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
+                    index === activeIndex
+                      ? "bg-wolt-bg-secondary"
+                      : "hover:bg-wolt-bg-secondary"
+                  } ${index === searchResults.length - 1 ? "rounded-b-[12px]" : ""}`}
+                >
+                  {/* Venue image */}
+                  {result.image ? (
+                    <Image
+                      src={`${result.image.url}?w=96`}
+                      alt={result.name}
+                      width={40}
+                      height={40}
+                      className="w-10 h-10 rounded-[8px] object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-[8px] bg-wolt-bg-tertiary flex items-center justify-center flex-shrink-0">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z" fill="#a1a5ad"/>
+                      </svg>
+                    </div>
+                  )}
+
+                  {/* Venue info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-wolt-text-primary truncate">
+                        {result.name}
+                      </span>
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        result.online ? "bg-wolt-positive" : "bg-wolt-negative"
+                      }`} />
+                    </div>
+                    {result.address && (
+                      <p className="text-xs text-wolt-text-secondary truncate">
+                        {result.address}
+                      </p>
+                    )}
+                    {result.tags.length > 0 && (
+                      <p className="text-xs text-wolt-text-disabled truncate">
+                        {result.tags.slice(0, 3).join(" · ")}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Rating */}
+                  {result.rating && result.rating.score > 0 && (
+                    <span className="text-xs font-medium text-wolt-text-secondary flex-shrink-0">
+                      {result.rating.score.toFixed(1)}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Venue list */}
         {venues.length === 0 ? (
@@ -296,7 +545,7 @@ export default function Home() {
               No venues tracked yet
             </p>
             <p className="text-sm text-wolt-text-secondary max-w-[280px] mx-auto leading-relaxed">
-              Paste a Wolt restaurant link above and we&apos;ll let you know when it opens
+              Search for a restaurant above and we&apos;ll let you know when it opens
             </p>
           </div>
         ) : (

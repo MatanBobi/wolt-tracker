@@ -10,6 +10,7 @@ export interface Venue {
   online: boolean | null;
   lastChecked: number | null;
   tracking: boolean;
+  trackedSince: number | null;
 }
 
 // ─── Venue operations (per user) ───

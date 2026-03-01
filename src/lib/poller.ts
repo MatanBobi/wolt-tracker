@@ -6,6 +6,7 @@ import {
   getSubscription,
   removeSubscription,
 } from "./store";
+import type { Venue } from "./store";
 
 // Configure web-push with VAPID keys
 webpush.setVapidDetails(
@@ -16,6 +17,8 @@ webpush.setVapidDetails(
 
 const WOLT_API_BASE =
   "https://consumer-api.wolt.com/order-xp/web/v1/venue/slug";
+
+const TRACKING_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 // Random delay between 0-5s to add jitter between individual checks
 function getRandomDelay(): number {
@@ -82,6 +85,34 @@ async function notifyUser(
   }
 }
 
+async function notifyExpired(
+  userId: string,
+  venue: { slug: string; name: string }
+) {
+  const subscription = await getSubscription(userId);
+  if (!subscription) return;
+
+  const payload = JSON.stringify({
+    title: "Tracking expired",
+    body: `${venue.name} was tracked for 1 hour without coming online. Tracking has been stopped.`,
+    url: `https://wolt.com/en/isr/restaurant/${venue.slug}`,
+    timestamp: Date.now(),
+  });
+
+  try {
+    await webpush.sendNotification(subscription, payload);
+    console.log(`[Push] Sent expiry notification to user ${userId} for ${venue.name}`);
+  } catch (error: unknown) {
+    const webPushError = error as { statusCode?: number };
+    if (webPushError.statusCode === 410 || webPushError.statusCode === 404) {
+      await removeSubscription(userId);
+      console.log(`[Push] Removed expired subscription for user ${userId}`);
+    } else {
+      console.error(`[Push] Failed to send expiry to user ${userId}:`, error);
+    }
+  }
+}
+
 // Group trackings by slug to avoid hitting the same Wolt endpoint multiple times
 function groupBySlug(
   trackings: { userId: string; venueId: string; slug: string }[]
@@ -113,7 +144,7 @@ export async function pollAllVenues() {
   const activeTrackings = await getAllActiveTrackings();
   if (activeTrackings.length === 0) {
     console.log("[Poller] No active trackings.");
-    return { checked: 0, notified: 0 };
+    return { checked: 0, notified: 0, expired: 0 };
   }
 
   // Resolve each tracking to include the slug
@@ -127,11 +158,37 @@ export async function pollAllVenues() {
     userId: string;
     venueId: string;
     slug: string;
-    venue: { online: boolean | null; name: string; slug: string };
+    venue: Venue;
   }[];
 
+  // Check for expired trackings (older than 1 hour) and stop them
+  const now = Date.now();
+  const active: typeof valid = [];
+  let expired = 0;
+
+  for (const entry of valid) {
+    const { trackedSince } = entry.venue;
+    if (trackedSince && now - trackedSince >= TRACKING_TTL_MS) {
+      const displayName = entry.venue.name || entry.slug;
+      console.log(
+        `[Poller] Tracking expired for ${displayName} (user ${entry.userId}) — stopping`
+      );
+      await updateVenue(entry.userId, entry.venueId, {
+        tracking: false,
+        trackedSince: null,
+      });
+      await notifyExpired(entry.userId, {
+        slug: entry.slug,
+        name: displayName,
+      });
+      expired++;
+    } else {
+      active.push(entry);
+    }
+  }
+
   // Group by slug so we only call Wolt once per unique venue
-  const groups = groupBySlug(valid);
+  const groups = groupBySlug(active);
 
   let checked = 0;
   let notified = 0;
@@ -145,7 +202,7 @@ export async function pollAllVenues() {
       checked++;
 
       for (const entry of group.entries) {
-        const tracking = valid.find(
+        const tracking = active.find(
           (v) => v.userId === entry.userId && v.venueId === entry.venueId
         );
         const wasOffline =
@@ -186,7 +243,7 @@ export async function pollAllVenues() {
     }
   }
 
-  return { checked, notified };
+  return { checked, notified, expired };
 }
 
 // ─── Dev-only auto-poller ───

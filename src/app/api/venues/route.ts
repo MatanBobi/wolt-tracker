@@ -66,6 +66,7 @@ export async function POST(request: NextRequest) {
     online: null,
     lastChecked: null,
     tracking: true,
+    trackedSince: Date.now(),
   };
 
   await addVenue(userId, venue);
@@ -106,6 +107,10 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
 
-  await updateVenue(userId, id, { tracking });
+  const updates: { tracking: boolean; trackedSince: number | null } = tracking
+    ? { tracking: true, trackedSince: Date.now() }
+    : { tracking: false, trackedSince: null };
+
+  await updateVenue(userId, id, updates);
   return NextResponse.json({ success: true });
 }
