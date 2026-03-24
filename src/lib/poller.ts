@@ -47,7 +47,7 @@ async function checkVenueStatus(
   }
 
   const data = await response.json();
-  const online = data?.venue?.online ?? false;
+  const online = data?.venue?.delivery_open_status?.is_open ?? false;
   const name = data?.venue?.name?.[0]?.value ?? null;
 
   return { online, name };
