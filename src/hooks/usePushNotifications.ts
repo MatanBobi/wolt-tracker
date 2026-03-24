@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { urlBase64ToUint8Array } from "@/lib/utils";
 
 export function usePushNotifications(
@@ -7,14 +7,19 @@ export function usePushNotifications(
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
   const [pushLoading, setPushLoading] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
 
   const sendSubscriptionToServer = useCallback(
     async (subscription: PushSubscription) => {
-      await fetch("/api/subscribe", {
+      const res = await fetch("/api/subscribe", {
         method: "POST",
         headers: headers(),
         body: JSON.stringify(subscription.toJSON()),
       });
+      if (!res.ok) {
+        throw new Error(`Failed to save subscription: ${res.status}`);
+      }
     },
     [headers]
   );
@@ -29,8 +34,25 @@ export function usePushNotifications(
       if (interactive) setPushLoading(true);
 
       try {
-        const registration = await navigator.serviceWorker.register("/sw.js");
+        const registration = await navigator.serviceWorker.register("/sw.js", {
+          updateViaCache: "none",
+        });
+        registrationRef.current = registration;
         await navigator.serviceWorker.ready;
+
+        // Listen for new service worker updates
+        registration.addEventListener("updatefound", () => {
+          const newWorker = registration.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener("statechange", () => {
+            if (
+              newWorker.state === "activated" &&
+              navigator.serviceWorker.controller
+            ) {
+              setUpdateAvailable(true);
+            }
+          });
+        });
 
         // Check if the user revoked permission after we got a subscription
         if (Notification.permission === "denied") {
@@ -97,5 +119,17 @@ export function usePushNotifications(
     return () => clearTimeout(timeout);
   }, [setupPush]);
 
-  return { pushEnabled, pushError, pushLoading, setupPush };
+  // Periodically check for SW updates (important for iOS which doesn't check reliably)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      registrationRef.current?.update();
+    }, 60 * 1000); // Check every 60s
+    return () => clearInterval(interval);
+  }, []);
+
+  const applyUpdate = useCallback(() => {
+    window.location.reload();
+  }, []);
+
+  return { pushEnabled, pushError, pushLoading, setupPush, updateAvailable, applyUpdate };
 }

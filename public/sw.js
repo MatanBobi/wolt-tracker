@@ -1,5 +1,17 @@
 // Service worker for receiving push notifications
+// Version is updated at build time to trigger SW updates on iOS
+// eslint-disable-next-line no-unused-vars
+const SW_VERSION = "__SW_VERSION__";
 /// <reference lib="webworker" />
+
+// Activate new service worker immediately, critical for iOS PWA updates
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
 
 self.addEventListener("push", (event) => {
   const e = /** @type {PushEvent} */ (event);

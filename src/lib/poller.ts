@@ -58,7 +58,10 @@ async function notifyUser(
   venue: { slug: string; name: string }
 ) {
   const subscription = await getSubscription(userId);
-  if (!subscription) return;
+  if (!subscription) {
+    console.warn(`[Push] No subscription found for user ${userId} — skipping notification`);
+    return;
+  }
 
   const payload = JSON.stringify({
     title: "Wolt Venue is OPEN!",
@@ -90,7 +93,10 @@ async function notifyExpired(
   venue: { slug: string; name: string }
 ) {
   const subscription = await getSubscription(userId);
-  if (!subscription) return;
+  if (!subscription) {
+    console.warn(`[Push] No subscription found for user ${userId} — skipping expiry notification`);
+    return;
+  }
 
   const payload = JSON.stringify({
     title: "Tracking expired",

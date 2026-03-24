@@ -4,6 +4,12 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Wolt Venue Tracker",
   description: "Track Wolt venues and get notified when they come back online",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Wolt Tracker",
+  },
 };
 
 export default function RootLayout({

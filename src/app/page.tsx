@@ -40,7 +40,7 @@ export default function Home() {
     handleQueryChange,
     clearSearch,
   } = useSearch(location);
-  const { pushEnabled, pushError, pushLoading, setupPush } =
+  const { pushEnabled, pushError, pushLoading, setupPush, updateAvailable, applyUpdate } =
     usePushNotifications(headers);
 
   async function handleSelectVenue(result: SearchResult) {
@@ -84,6 +84,18 @@ export default function Home() {
         pushLoading={pushLoading}
         setupPush={setupPush}
       />
+
+      {updateAvailable && (
+        <div className="bg-wolt-blue text-white text-center py-2 px-4 text-sm flex items-center justify-center gap-2">
+          <span>A new version is available.</span>
+          <button
+            onClick={applyUpdate}
+            className="underline font-semibold hover:opacity-80 cursor-pointer"
+          >
+            Refresh
+          </button>
+        </div>
+      )}
 
       <main className="max-w-[640px] mx-auto px-4 py-6">
         <SearchBar

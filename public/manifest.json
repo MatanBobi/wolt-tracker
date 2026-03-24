@@ -1,0 +1,21 @@
+{
+  "name": "Wolt Venue Tracker",
+  "short_name": "Wolt Tracker",
+  "description": "Track Wolt venues and get notified when they come back online",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#009de0",
+  "icons": [
+    {
+      "src": "/wolt-icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/wolt-icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
