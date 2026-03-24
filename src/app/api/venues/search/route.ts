@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const WOLT_SEARCH_API =
-  "https://restaurant-api.wolt.com/v1/pages/search";
+const WOLT_SEARCH_API = "https://restaurant-api.wolt.com/v1/pages/search";
 
 // Tel Aviv coordinates
 const DEFAULT_LAT = 32.0853;
@@ -70,13 +69,14 @@ export async function GET(request: NextRequest) {
         q: query.trim(),
         lat,
         lon,
+        target: "venues",
       }),
       cache: "no-store",
     });
 
     if (!response.ok) {
       console.warn(
-        `[Search] Wolt search API returned ${response.status} for query "${query}"`
+        `[Search] Wolt search API returned ${response.status} for query "${query}"`,
       );
       return NextResponse.json({ venues: [] });
     }
@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
 
     // Extract venue results from the "venues" section
     const venuesSection = data.sections?.find(
-      (s: WoltSearchSection) => s.name === "venues"
+      (s: WoltSearchSection) => s.name === "venues",
     );
 
     if (!venuesSection?.items) {
