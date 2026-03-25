@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.1.4](https://github.com/MatanBobi/wolt-tracker/compare/v0.1.3...v0.1.4) (2026-03-25)
+
+
+### Features
+
+* add distance to search ([9a8322e](https://github.com/MatanBobi/wolt-tracker/commit/9a8322e867ad12567eb82a23da107a4f613e2ac2))
+
 ## [0.1.3](https://github.com/MatanBobi/wolt-tracker/compare/v0.1.2...v0.1.3) (2026-03-25)
 
 
