@@ -17,4 +17,5 @@ export interface SearchResult {
   image: { url: string } | null;
   tags: string[];
   rating: { score: number } | null;
+  distance: number | null;
 }

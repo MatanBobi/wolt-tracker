@@ -216,12 +216,21 @@ function SearchResultsDropdown({
             )}
           </div>
 
-          {/* Rating */}
-          {result.rating && result.rating.score > 0 && (
-            <span className="text-xs font-medium text-wolt-text-secondary flex-shrink-0">
-              {result.rating.score.toFixed(1)}
-            </span>
-          )}
+          {/* Distance & Rating */}
+          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+            {result.distance != null && (
+              <span className="text-xs text-wolt-text-disabled">
+                {result.distance < 1
+                  ? `${Math.round(result.distance * 1000)}m`
+                  : `${result.distance.toFixed(1)}km`}
+              </span>
+            )}
+            {result.rating && result.rating.score > 0 && (
+              <span className="text-xs font-medium text-wolt-text-secondary">
+                {result.rating.score.toFixed(1)}
+              </span>
+            )}
+          </div>
         </button>
       ))}
     </div>

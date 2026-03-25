@@ -14,6 +14,24 @@ interface WoltVenueResult {
   image: { url: string } | null;
   tags: string[];
   rating: { score: number } | null;
+  distance: number | null;
+}
+
+function haversineDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 interface WoltSearchItem {
@@ -28,6 +46,7 @@ interface WoltSearchItem {
     address: string;
     tags: string[];
     rating?: { score: number };
+    location: [number, number];
   };
   link?: {
     target: string;
@@ -94,15 +113,23 @@ export async function GET(request: NextRequest) {
 
     const venues: WoltVenueResult[] = venuesSection.items
       .filter((item: WoltSearchItem) => item.template === "venue" && item.venue)
-      .map((item: WoltSearchItem) => ({
-        slug: item.venue!.slug,
-        name: item.venue!.name || item.title,
-        online: item.venue!.online ?? false,
-        address: item.venue!.address || "",
-        image: item.image ?? null,
-        tags: item.venue!.tags ?? [],
-        rating: item.venue!.rating ?? null,
-      }));
+      .map((item: WoltSearchItem) => {
+        const [venueLon, venueLat] = item.venue!.location ?? [];
+        const distance =
+          venueLat != null && venueLon != null
+            ? haversineDistance(lat, lon, venueLat, venueLon)
+            : null;
+        return {
+          slug: item.venue!.slug,
+          name: item.venue!.name || item.title,
+          online: item.venue!.online ?? false,
+          address: item.venue!.address || "",
+          image: item.image ?? null,
+          tags: item.venue!.tags ?? [],
+          rating: item.venue!.rating ?? null,
+          distance,
+        };
+      });
 
     return NextResponse.json({ venues });
   } catch (error) {
