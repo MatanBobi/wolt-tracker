@@ -1,9 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import type { Venue } from "@/types";
 
-export function useVenues(
-  headers: () => Record<string, string>
-) {
+export function useVenues(headers: () => Record<string, string>) {
   const [venues, setVenues] = useState<Venue[]>([]);
 
   const fetchVenues = useCallback(async () => {
@@ -25,16 +23,22 @@ export function useVenues(
     };
   }, [fetchVenues]);
 
-  async function addVenue(url: string) {
+  async function addVenue(
+    url: string,
+  ): Promise<{ ok: boolean; alreadyOpen?: boolean; name?: string }> {
     const res = await fetch("/api/venues", {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({ url }),
     });
+    const data = await res.json();
+    if (data.alreadyOpen) {
+      return { ok: true, alreadyOpen: true, name: data.name };
+    }
     if (res.ok) {
       fetchVenues();
     }
-    return res.ok;
+    return { ok: res.ok };
   }
 
   async function deleteVenue(id: string) {

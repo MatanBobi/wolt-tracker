@@ -1,9 +1,15 @@
-import type { LocationStatus } from "@/hooks/useLocation";
+import { useRef, useEffect } from "react";
+import type { LocationStatus, AddressSuggestion } from "@/hooks/useLocation";
 
 interface HeaderProps {
-  location: { lat: number; lon: number } | null;
+  address: string;
   locationStatus: LocationStatus;
-  requestLocation: () => void;
+  suggestions: AddressSuggestion[];
+  showSuggestions: boolean;
+  onAddressChange: (value: string) => void;
+  onSelectSuggestion: (suggestion: AddressSuggestion) => void;
+  onClearAddress: () => void;
+  onDismissSuggestions: () => void;
   pushEnabled: boolean;
   pushError: string | null;
   pushLoading: boolean;
@@ -11,9 +17,14 @@ interface HeaderProps {
 }
 
 export function Header({
-  location,
+  address,
   locationStatus,
-  requestLocation,
+  suggestions,
+  showSuggestions,
+  onAddressChange,
+  onSelectSuggestion,
+  onClearAddress,
+  onDismissSuggestions,
   pushEnabled,
   pushError,
   pushLoading,
@@ -43,10 +54,15 @@ export function Header({
 
         {/* Status pills */}
         <div className="ml-auto flex items-center gap-2">
-          <LocationPill
-            location={location}
+          <AddressInput
+            address={address}
             locationStatus={locationStatus}
-            requestLocation={requestLocation}
+            suggestions={suggestions}
+            showSuggestions={showSuggestions}
+            onAddressChange={onAddressChange}
+            onSelect={onSelectSuggestion}
+            onClear={onClearAddress}
+            onDismiss={onDismissSuggestions}
           />
           <NotificationPill
             pushEnabled={pushEnabled}
@@ -60,17 +76,42 @@ export function Header({
   );
 }
 
-// ─── Location pill ───
+// ─── Address input ───
 
-function LocationPill({
-  location,
+function AddressInput({
+  address,
   locationStatus,
-  requestLocation,
+  suggestions,
+  showSuggestions,
+  onAddressChange,
+  onSelect,
+  onClear,
+  onDismiss,
 }: {
-  location: { lat: number; lon: number } | null;
+  address: string;
   locationStatus: LocationStatus;
-  requestLocation: () => void;
+  suggestions: AddressSuggestion[];
+  showSuggestions: boolean;
+  onAddressChange: (value: string) => void;
+  onSelect: (suggestion: AddressSuggestion) => void;
+  onClear: () => void;
+  onDismiss: () => void;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        onDismiss();
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [onDismiss]);
+
   const locationIcon = (
     <svg
       width="12"
@@ -86,40 +127,75 @@ function LocationPill({
     </svg>
   );
 
-  if (locationStatus === "granted") {
-    return (
-      <span
-        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700"
-        title={`Location: ${location?.lat.toFixed(4)}, ${location?.lon.toFixed(4)}`}
-      >
-        {locationIcon}
-        Nearby
-      </span>
-    );
-  }
-
-  if (locationStatus === "denied" || locationStatus === "unavailable") {
-    return (
-      <button
-        onClick={requestLocation}
-        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors cursor-pointer"
-        title={
-          locationStatus === "denied"
-            ? "Location access denied. Click to retry."
-            : "Location unavailable. Click to retry."
-        }
-      >
-        {locationIcon}
-        {locationStatus === "denied" ? "Location denied" : "No location"}
-      </button>
-    );
-  }
+  const statusColor =
+    locationStatus === "resolved"
+      ? "border-green-300 bg-green-50 text-green-700"
+      : locationStatus === "error"
+        ? "border-amber-300 bg-amber-50 text-amber-700"
+        : locationStatus === "loading"
+          ? "border-blue-300 bg-blue-50 text-blue-700"
+          : "border-wolt-border bg-wolt-bg-primary text-wolt-text-secondary";
 
   return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs text-wolt-text-disabled">
-      <span className="w-1.5 h-1.5 rounded-full bg-wolt-text-disabled animate-pulse" />
-      Locating...
-    </span>
+    <div ref={containerRef} className="relative">
+      <div
+        className={`inline-flex items-center gap-1.5 rounded-full text-xs font-medium px-2.5 py-1 border ${statusColor}`}
+      >
+        {locationStatus === "loading" ? (
+          <span className="inline-block w-3 h-3 border-[1.5px] border-current/30 border-t-current rounded-full animate-spin" />
+        ) : (
+          locationIcon
+        )}
+        <input
+          type="text"
+          value={address}
+          onChange={(e) => onAddressChange(e.target.value)}
+          placeholder="Your address..."
+          className="bg-transparent outline-none text-xs w-28 placeholder:text-current/50"
+        />
+        {address && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="text-current/60 hover:text-current transition-colors cursor-pointer"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      {/* Suggestions dropdown */}
+      {showSuggestions && suggestions.length > 0 && (
+        <div className="absolute right-0 top-full mt-1 w-72 bg-wolt-bg-primary border border-wolt-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.12)] max-h-52 overflow-y-auto z-30">
+          {suggestions.map((suggestion, index) => (
+            <button
+              key={`${suggestion.lat}-${suggestion.lon}-${index}`}
+              type="button"
+              onClick={() => onSelect(suggestion)}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-wolt-bg-secondary transition-colors first:rounded-t-xl last:rounded-b-xl"
+            >
+              <span className="text-wolt-text-disabled flex-shrink-0">
+                {locationIcon}
+              </span>
+              <span className="text-xs text-wolt-text-primary truncate">
+                {suggestion.displayName}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -6,7 +6,7 @@ import {
   removeVenue,
   updateVenue,
 } from "../../../lib/store";
-import { startDevPollerIfNeeded } from "../../../lib/poller";
+import { startDevPollerIfNeeded, checkVenueStatus } from "../../../lib/poller";
 import { scrapeVenueMetadata } from "../../../lib/scrape";
 
 function extractSlug(input: string): string {
@@ -26,7 +26,10 @@ function extractSlug(input: string): string {
 export async function GET(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
   if (!userId) {
-    return NextResponse.json({ error: "x-user-id header required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "x-user-id header required" },
+      { status: 400 },
+    );
   }
 
   const venues = await getVenues(userId);
@@ -36,7 +39,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
   if (!userId) {
-    return NextResponse.json({ error: "x-user-id header required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "x-user-id header required" },
+      { status: 400 },
+    );
   }
 
   const body = await request.json();
@@ -45,11 +51,25 @@ export async function POST(request: NextRequest) {
   if (!url || typeof url !== "string") {
     return NextResponse.json(
       { error: "url is required (Wolt venue URL or slug)" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   const slug = extractSlug(url);
+
+  // Check if the venue is already online before subscribing
+  try {
+    const status = await checkVenueStatus(slug);
+    if (status.online) {
+      return NextResponse.json(
+        { alreadyOpen: true, name: status.name || slug, slug },
+        { status: 200 },
+      );
+    }
+  } catch {
+    // If the status check fails, proceed with tracking anyway
+  }
+
   const id = nanoid();
 
   // Scrape the venue page for the display name and header image
@@ -80,7 +100,10 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
   if (!userId) {
-    return NextResponse.json({ error: "x-user-id header required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "x-user-id header required" },
+      { status: 400 },
+    );
   }
 
   const { searchParams } = new URL(request.url);
@@ -97,7 +120,10 @@ export async function DELETE(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
   if (!userId) {
-    return NextResponse.json({ error: "x-user-id header required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "x-user-id header required" },
+      { status: 400 },
+    );
   }
 
   const body = await request.json();

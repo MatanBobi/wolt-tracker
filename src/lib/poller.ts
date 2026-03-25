@@ -12,7 +12,7 @@ import type { Venue } from "./store";
 webpush.setVapidDetails(
   process.env.VAPID_SUBJECT || "mailto:you@example.com",
   process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "",
-  process.env.VAPID_PRIVATE_KEY || ""
+  process.env.VAPID_PRIVATE_KEY || "",
 );
 
 const WOLT_API_BASE =
@@ -25,8 +25,8 @@ function getRandomDelay(): number {
   return Math.floor(Math.random() * 5_000);
 }
 
-async function checkVenueStatus(
-  slug: string
+export async function checkVenueStatus(
+  slug: string,
 ): Promise<{ online: boolean; name: string | null }> {
   const url = `${WOLT_API_BASE}/${slug}/dynamic/?selected_delivery_method=homedelivery`;
 
@@ -55,11 +55,13 @@ async function checkVenueStatus(
 
 async function notifyUser(
   userId: string,
-  venue: { slug: string; name: string }
+  venue: { slug: string; name: string },
 ) {
   const subscription = await getSubscription(userId);
   if (!subscription) {
-    console.warn(`[Push] No subscription found for user ${userId} — skipping notification`);
+    console.warn(
+      `[Push] No subscription found for user ${userId} — skipping notification`,
+    );
     return;
   }
 
@@ -80,21 +82,20 @@ async function notifyUser(
       await removeSubscription(userId);
       console.log(`[Push] Removed expired subscription for user ${userId}`);
     } else {
-      console.error(
-        `[Push] Failed to send to user ${userId}:`,
-        error
-      );
+      console.error(`[Push] Failed to send to user ${userId}:`, error);
     }
   }
 }
 
 async function notifyExpired(
   userId: string,
-  venue: { slug: string; name: string }
+  venue: { slug: string; name: string },
 ) {
   const subscription = await getSubscription(userId);
   if (!subscription) {
-    console.warn(`[Push] No subscription found for user ${userId} — skipping expiry notification`);
+    console.warn(
+      `[Push] No subscription found for user ${userId} — skipping expiry notification`,
+    );
     return;
   }
 
@@ -107,7 +108,9 @@ async function notifyExpired(
 
   try {
     await webpush.sendNotification(subscription, payload);
-    console.log(`[Push] Sent expiry notification to user ${userId} for ${venue.name}`);
+    console.log(
+      `[Push] Sent expiry notification to user ${userId} for ${venue.name}`,
+    );
   } catch (error: unknown) {
     const webPushError = error as { statusCode?: number };
     if (webPushError.statusCode === 410 || webPushError.statusCode === 404) {
@@ -121,7 +124,7 @@ async function notifyExpired(
 
 // Group trackings by slug to avoid hitting the same Wolt endpoint multiple times
 function groupBySlug(
-  trackings: { userId: string; venueId: string; slug: string }[]
+  trackings: { userId: string; venueId: string; slug: string }[],
 ) {
   const map = new Map<
     string,
@@ -158,7 +161,7 @@ export async function pollAllVenues() {
     activeTrackings.map(async ({ userId, venueId }) => {
       const venue = await getVenue(userId, venueId);
       return venue ? { userId, venueId, slug: venue.slug, venue } : null;
-    })
+    }),
   );
   const valid = resolved.filter(Boolean) as {
     userId: string;
@@ -177,7 +180,7 @@ export async function pollAllVenues() {
     if (trackedSince && now - trackedSince >= TRACKING_TTL_MS) {
       const displayName = entry.venue.name || entry.slug;
       console.log(
-        `[Poller] Tracking expired for ${displayName} (user ${entry.userId}) — stopping`
+        `[Poller] Tracking expired for ${displayName} (user ${entry.userId}) — stopping`,
       );
       await updateVenue(entry.userId, entry.venueId, {
         tracking: false,
@@ -209,7 +212,7 @@ export async function pollAllVenues() {
 
       for (const entry of group.entries) {
         const tracking = active.find(
-          (v) => v.userId === entry.userId && v.venueId === entry.venueId
+          (v) => v.userId === entry.userId && v.venueId === entry.venueId,
         );
         const wasOffline =
           tracking?.venue.online === false || tracking?.venue.online === null;
@@ -224,17 +227,21 @@ export async function pollAllVenues() {
         if (wasOffline && isNowOnline) {
           const displayName = name || tracking?.venue.name || group.slug;
           console.log(
-            `[Poller] ${displayName} came ONLINE — notifying user ${entry.userId}`
+            `[Poller] ${displayName} came ONLINE — notifying user ${entry.userId}`,
           );
           await notifyUser(entry.userId, {
             slug: group.slug,
             name: displayName,
           });
+          await updateVenue(entry.userId, entry.venueId, {
+            tracking: false,
+            trackedSince: null,
+          });
           notified++;
         } else {
           const displayName = name || tracking?.venue.name || group.slug;
           console.log(
-            `[Poller] ${displayName} is ${online ? "online" : "offline"} for user ${entry.userId}`
+            `[Poller] ${displayName} is ${online ? "online" : "offline"} for user ${entry.userId}`,
           );
         }
       }

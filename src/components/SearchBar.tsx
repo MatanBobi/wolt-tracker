@@ -38,12 +38,12 @@ export function SearchBar({
     if (e.key === "ArrowDown") {
       e.preventDefault();
       onSetActiveIndex(
-        activeIndex < searchResults.length - 1 ? activeIndex + 1 : 0
+        activeIndex < searchResults.length - 1 ? activeIndex + 1 : 0,
       );
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       onSetActiveIndex(
-        activeIndex > 0 ? activeIndex - 1 : searchResults.length - 1
+        activeIndex > 0 ? activeIndex - 1 : searchResults.length - 1,
       );
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
