@@ -45,9 +45,10 @@ export async function checkVenueStatus(
   if (!response.ok) {
     throw new Error(`Wolt API returned ${response.status}`);
   }
-
   const data = await response.json();
-  const online = data?.venue?.delivery_open_status?.is_open ?? false;
+  const venueOnline = data?.venue?.online ?? false;
+  const deliveryOpen = data?.venue?.delivery_open_status?.is_open ?? false;
+  const online = venueOnline && deliveryOpen;
   const name = data?.venue?.name?.[0]?.value ?? null;
 
   return { online, name };
