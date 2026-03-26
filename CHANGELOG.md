@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.1.6](https://github.com/MatanBobi/wolt-tracker/compare/v0.1.5...v0.1.6) (2026-03-26)
+
+
+### Bug Fixes
+
+* poller wrongfully showing online status ([0f49e5f](https://github.com/MatanBobi/wolt-tracker/commit/0f49e5fc3a696fcc9ba678b306f9988052511d35))
+
 ## [0.1.5](https://github.com/MatanBobi/wolt-tracker/compare/v0.1.3...v0.1.5) (2026-03-26)
 
 
